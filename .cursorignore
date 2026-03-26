@@ -1,0 +1,26 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+# Keep source code indexable; ignore dependencies, caches, and generated artifacts.
+node_modules/
+dist/
+build/
+coverage/
+
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.log
+*.sqlite
+*.sqlite3
+dataset/
+
+# Optional large binary/data outputs
+*.pt
+*.pth
+*.onnx
+*.zip

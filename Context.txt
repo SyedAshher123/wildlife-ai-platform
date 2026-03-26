@@ -1,0 +1,415 @@
+Below is a production-ready blueprint for your stack:
+
+Frontend: TypeScript
+
+Backend: FastAPI
+
+DB: PostgreSQL
+
+Detection: MegaDetector
+
+Classifier: AWC135
+
+Target species: Spotted-tailed quoll
+
+
+
+---
+
+1. High-level system architecture
+
+Frontend (TypeScript / React)
+        │
+        │ REST API
+        ▼
+FastAPI Backend
+        │
+        ├─ Auth / Users
+        ├─ Image Upload
+        ├─ Detection API
+        ├─ Annotation API
+        └─ Admin API
+        │
+        ▼
+Task Queue (Redis + Celery)
+        │
+        ▼
+ML Workers
+        │
+        ├─ MegaDetector (animal detection)
+        ├─ Crop bounding boxes
+        ├─ AWC135 species classification
+        └─ Save detections
+        │
+        ▼
+PostgreSQL
+        │
+        ▼
+Object Storage (S3 / MinIO)
+
+Why this architecture works:
+
+API stays fast
+
+ML processing happens asynchronously
+
+workers can scale horizontally
+
+
+
+---
+
+2. Production folder structure
+
+Recommended layout:
+
+wildlife-ai-platform/
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   │
+│   │   ├── api/
+│   │   │   ├── auth.py
+│   │   │   ├── images.py
+│   │   │   ├── detections.py
+│   │   │   ├── annotations.py
+│   │   │   └── admin.py
+│   │   │
+│   │   ├── models/
+│   │   │   ├── user.py
+│   │   │   ├── camera.py
+│   │   │   ├── image.py
+│   │   │   ├── detection.py
+│   │   │   ├── annotation.py
+│   │   │   └── individual.py
+│   │   │
+│   │   ├── schemas/
+│   │   │   ├── user_schema.py
+│   │   │   ├── image_schema.py
+│   │   │   └── detection_schema.py
+│   │   │
+│   │   ├── services/
+│   │   │   ├── image_service.py
+│   │   │   ├── detection_service.py
+│   │   │   └── annotation_service.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── session.py
+│   │   │   ├── base.py
+│   │   │   └── migrations/
+│   │   │
+│   │   └── utils/
+│   │       ├── auth_utils.py
+│   │       └── storage_utils.py
+│   │
+│   ├── worker/
+│   │   ├── celery_worker.py
+│   │   ├── tasks.py
+│   │   └── pipelines/
+│   │       ├── megadetector_pipeline.py
+│   │       ├── awc135_pipeline.py
+│   │       └── quoll_pipeline.py
+│   │
+│   └── tests/
+│
+├── ml_models/
+│   ├── megadetector/
+│   │   └── md_v5.pt
+│   │
+│   ├── awc135/
+│   │   └── awc135_weights.pt
+│   │
+│   └── embeddings/
+│       └── quoll_reid_model.pt
+│
+├── storage/
+│   ├── images/
+│   ├── thumbnails/
+│   └── crops/
+│
+├── scripts/
+│   ├── bulk_import.py
+│   ├── dataset_export.py
+│   └── retrain_model.py
+│
+├── docker/
+│   ├── Dockerfile.api
+│   ├── Dockerfile.worker
+│   └── docker-compose.yml
+│
+├── docs/
+│   ├── system_design.md
+│   ├── api_docs.md
+│   └── ml_pipeline.md
+│
+└── MASTER_PROJECT_FILE.md
+
+
+---
+
+3. Image processing pipeline (production)
+
+Pipeline with MegaDetector:
+
+Upload image
+     │
+store in object storage
+     │
+enqueue job
+     │
+MegaDetector
+     │
+animal detected?
+     ├─ NO → mark empty
+     └─ YES
+           │
+           crop bounding box
+           │
+           AWC135 classifier
+           │
+           if species == quoll
+           store detection
+
+
+---
+
+4. Celery worker task
+
+Example ML worker task:
+
+@celery.task
+def process_image(image_id):
+
+    image = load_image(image_id)
+
+    boxes = megadetector.detect(image)
+
+    if not boxes:
+        mark_empty(image_id)
+        return
+
+    for box in boxes:
+
+        crop = crop_box(image, box)
+
+        species, conf = awc135.predict(crop)
+
+        save_detection(image_id, species, conf, box)
+
+
+---
+
+5. Database design for millions of images
+
+Key tables:
+
+Images
+
+images
+------
+id
+camera_id
+file_path
+captured_at
+uploaded_at
+processed
+
+Detections
+
+detections
+----------
+id
+image_id
+species
+confidence
+bbox
+model_version
+
+Indexes (CRITICAL)
+
+CREATE INDEX idx_images_camera_time
+ON images(camera_id, captured_at);
+
+CREATE INDEX idx_detections_species
+ON detections(species);
+
+Without indexes, queries become unusable at 1M+ images.
+
+
+---
+
+6. Handling 1–5 million images efficiently
+
+1️⃣ Use object storage
+
+Never store images in DB.
+
+Use:
+
+AWS S3
+
+MinIO
+
+Google Cloud Storage
+
+
+Store only:
+
+s3://bucket/camera01/2026/05/img001.jpg
+
+
+---
+
+2️⃣ Batch ingestion
+
+Camera trap imports should run in batches.
+
+for image in batch:
+    queue_processing(image.id)
+
+Avoid processing synchronously.
+
+
+---
+
+3️⃣ Parallel ML workers
+
+Scale horizontally:
+
+1 worker  → 2k images/day
+10 workers → 20k images/day
+
+
+---
+
+4️⃣ Precompute thumbnails
+
+Researchers review images constantly.
+
+Generate thumbnails during ingestion:
+
+generate_thumbnail(image)
+
+This reduces bandwidth by 90%.
+
+
+---
+
+5️⃣ Dataset caching
+
+For research exports:
+
+/export/quoll_dataset_v1/
+
+Avoid rebuilding datasets every time.
+
+
+---
+
+7. Individual quoll identification
+
+Later pipeline:
+
+MegaDetector
+      ↓
+crop quoll
+      ↓
+embedding model
+      ↓
+vector comparison
+      ↓
+match known individual
+
+Use:
+
+FAISS vector search
+
+cosine similarity
+
+
+Database table:
+
+embeddings
+----------
+detection_id
+vector
+model_version
+
+
+---
+
+8. The MASTER_PROJECT_FILE.md
+
+Every serious research platform should have a single master document.
+
+Example structure:
+
+# Wildlife AI Platform
+
+## Project Overview
+System for automated detection of spotted-tailed quolls
+from camera trap imagery.
+
+## Tech Stack
+Frontend: TypeScript
+Backend: FastAPI
+Database: PostgreSQL
+Detection: MegaDetector
+Classifier: AWC135
+
+## Architecture
+[diagram]
+
+## ML Pipeline
+MegaDetector → Crop → AWC135
+
+## Data Schema
+images
+detections
+annotations
+individuals
+
+## Deployment
+Docker + Kubernetes
+
+## Model Versioning
+Each detection stores model version.
+
+## Research Export
+/export/datasets
+
+This document becomes the technical reference for future researchers.
+
+
+---
+
+9. Scaling expectations
+
+Camera trap projects often look like this:
+
+Stage	Images
+
+Pilot	50k
+PhD project	300k
+Multi-site study	1M
+Long-term monitoring	5M+
+
+
+Design for millions from day one.
+
+
+---
+
+10. One critical warning
+
+MegaDetector will remove 70–90% of empty images.
+
+Without it:
+
+your classifier wastes compute
+
+storage explodes
+
+ML workers slow down massively
